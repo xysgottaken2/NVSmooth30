@@ -203,6 +203,32 @@ Conclusions, now with hardware evidence at every stage:
 4. The default product behavior stays fail-closed (mode-0-equivalent refusal,
    game stable); the relabel modes remain probe-only opt-ins.
 
+## 5d. Driver 616.92 compatibility matrix (researched 2026-09-21)
+
+One `NvPresent64.dll` ships per Game Ready package for the whole GeForce
+stack, so the live RTX 2060 field data in section 5/5c IS this driver
+build's fingerprint: gate +0xc41f/+0xc437 matched, config enables
+self-activated, fatbins `sm89+sm120, no PTX`, loader `rc=300/0` behavior
+sweep. Release-note corroboration (616.92, 2026-09-09): Smooth Motion is
+alive and actively fixed - DX11 `SM+G-SYNC` frame pacing improved
+[6300603], DX11 jitter/ghosting [5937897] and SM launch crashes [5466398]
+fixed (both carried from hotfix 610.52). 616.92 is the best SM driver of
+the 61x branch; nothing about it changes the section-5c verdict for Turing.
+
+| Driver (61x era) | RTX 30xx + NVSmooth30 | RTX 2060 |
+|---|---|---|
+| 610.47-610.88 | SM works in the field (community: RTX 3080 + 610.88, "Smooth Motion Version 1", 2026-09-20: works on Game Pass/Epic/standalone DX11 titles + RPCS3/DuckStation/Yuzu/Eden; known Steam-client-launch crash caveat below) | gates pass, kernels cannot execute (measured) |
+| 616.92 | expected same-or-better: all 610.52/616.92 SM fixes present | unchanged: `ptx=0` measured on-package |
+| older (546-596) | dll-swap community practice (596.49 `NvPresent64.dll` preferred for pacing by some) | inspect for PTX before installing: `tools\inspect_nvp.py`; a `ptx_entries>0` hit activates the already-implemented auto-JIT |
+
+Steam caveat (from the field report, reproducer for ALL proxy-injection SM
+unlocks incl. this project's `version.dll`): games launched **through the
+Steam client** may crash at start; launching the game `.exe` directly works.
+Mitigations: direct-exe launch, disable Steam overlay for the title, or add
+the game to Steam as a non-Steam shortcut. Artifact note: interpolated
+output on Ampere (no FP8/late-gen tensor path) shows more ghosting than
+Ada/Blackwell at low base FPS - upstream is aware; not fixable by the port.
+
 ## 6. Known limitations
 
 * **Barrier #1 (resolved, artificial):** the `[rcx+14h]>=2/3` whitelist — already forced
