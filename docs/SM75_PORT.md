@@ -219,12 +219,17 @@ the 61x branch; nothing about it changes the section-5c verdict for Turing.
 |---|---|---|
 | 610.47-610.88 | SM works in the field (community: RTX 3080 + 610.88, "Smooth Motion Version 1", 2026-09-20: works on Game Pass/Epic/standalone DX11 titles + RPCS3/DuckStation/Yuzu/Eden; known Steam-client-launch crash caveat below) | gates pass, kernels cannot execute (measured) |
 | 616.92 | expected same-or-better: all 610.52/616.92 SM fixes present | unchanged: `ptx=0` measured on-package |
-| older (546-596) | dll-swap community practice (596.49 `NvPresent64.dll` preferred for pacing by some) | **measured 2026-09-21, offline inspection of 595.71**: `fatbins=37 sm89_entries=37 sm120_entries=37 ptx_entries=0 sm75_entries=0` - no driver-side route to working Turing kernels in this branch. NVIDIA's download page currently offers no older Turing package, so any further PTX hunt needs archive hosts (e.g. TechPowerUp) and is expected to be futile. |
+| older (546-596) | dll-swap community practice (596.49 `NvPresent64.dll` preferred for pacing by some) | **measured 2026-09-21, offline inspection of 595.71**: `fatbins=37 sm89_entries=37 sm120_entries=37 ptx_entries=0 sm75_entries=0` - no driver-side route to working Turing kernels in this branch. NVIDIA's download page offers no older Turing package and public archives (TechPowerUp driver DB) carry none for the 20-series either. **PTX hunt CLOSED 2026-09-21**: no obtainable driver for this GPU ships PTX for the Smooth Motion modules. |
 
 PTX-hunt winning condition (both must hold on the same DLL):
 `ptx_entries>0` **and** `gate_candidates>0` - PTX gives Turing-native
 kernels via the driver's JIT (auto-used by the implemented pass-through),
 while a resolvable gate lets the patcher arm the policy at all.
+
+Status: hunt closed negative (595.71 + 616.92 both fail the `ptx_entries`
+condition). The auto-JIT route stays dormant in the codebase - armed,
+unit-tested, and ready without source changes should a PTX-carrying driver
+ever become obtainable for Turing.
 
 Steam caveat (from the field report, reproducer for ALL proxy-injection SM
 unlocks incl. this project's `version.dll`): games launched **through the
