@@ -40,6 +40,16 @@ barrier: the loader only ever receives pass-through images unless you enable the
 explicit `SM75_FORCE_CUBIN_REWRITE` experiment, and PTX-carrying fatbins are
 handed to the driver's own JIT (the supported Turing route, when available).
 
+Hardware field status (measured on RTX 2060, driver 616.92): every artificial
+gate, enable and the D3D11->D3D12 bridge pass on Turing; the forced cubin
+relabel is accepted by the driver loader but the major-8 kernels cannot
+execute on major-7 hardware, so SM75 stays fail-closed by default (details in
+`docs/SM75_PORT.md` sections 5b-5d). On RTX 30 series the sm_89->sm_86 route is
+field-confirmed on 61x drivers; 616.92 is the recommended 61x build (it carries
+all current Smooth Motion fixes). Games launched **through the Steam client**
+may crash at start with any proxy-injected SM unlock - launching the game `.exe`
+directly works (see docs section 5d).
+
 Do not use this in competitive or anti-cheat-protected games. Keep a backup of
 every replaced file. A driver reset, game crash, corrupted frame, or black
 screen remains possible.
