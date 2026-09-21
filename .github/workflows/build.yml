@@ -34,7 +34,7 @@ jobs:
           echo BUILD-OK
         shell: cmd
 
-      - name: Publish build output to the job summary (readable via API)
+      - name: Publish build output as annotations + summary
         if: always()
         shell: bash
         run: |
@@ -44,6 +44,12 @@ jobs:
             tail -c 200000 build-output.txt || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          # Mirror compiler diagnostics into check-run annotations (API-readable).
+          if grep -qa "error" build-output.txt; then
+            grep -aE "error [A-Z]+[0-9]+" build-output.txt | head -30 | tr -d "\r" | sed "s/::/%3A%3A/g; s/%3A%3Aerror/%3Aerror/g" | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
 
       - name: Unit tests (portable fatbin engine, no GPU required)
         run: ctest --test-dir build -C Release --output-on-failure
