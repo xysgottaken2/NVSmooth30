@@ -129,7 +129,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
         desc.OutputWindow = window;
         desc.SampleDesc.Count = 1;
         desc.Windowed = TRUE;
-        desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        // Deliberately the legacy blt DISCARD model, matching typical D3D11
+        // games: DXGI only permits ONE flip-model chain per HWND, and the
+        // D3D11->D3D12 bridge creates its own flip-discard shadow on this
+        // same window.  A flip-model probe chain made the bridge's creation
+        // collide with E_ACCESSDENIED (observed on RTX 2060 hardware runs).
+        desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
         hr = D3D11CreateDeviceAndSwapChain(nullptr, driver, nullptr, flags, nullptr, 0,
                                            D3D11_SDK_VERSION, &desc, &swapchain, &device,
                                            nullptr, &context);
