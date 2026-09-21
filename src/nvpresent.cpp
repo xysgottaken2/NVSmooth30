@@ -2,6 +2,7 @@
 
 #include "nvs30/config.hpp"
 #include "nvs30/fatbin.hpp"
+#include "nvs30/gpu.hpp"
 #include "nvs30/log.hpp"
 #include "nvs30/pe.hpp"
 
@@ -229,12 +230,83 @@ std::byte* find_config(NvpInitD3D init) {
     return nullptr;
 }
 
+int WINAPI load_fatbin_for_turing(long id, void** module_out, const void* image) {
+    // Turing/SM75 policy.  The driver's Smooth Motion fatbins ship sm_89 and
+    // sm_120 cubins.  Retargeting *metadata* is only safe when the embedded
+    // SASS is executable on the target GPU: sm_89 -> sm_86 works because both
+    // are major-version 8 SASS with identical encodings for the instruction
+    // subset the kernels use.  sm_89 -> sm_75 crosses SASS majors (8 -> 7):
+    // Turing cores cannot decode Ampere/Ada instruction words.  Therefore on
+    // SM75 we (1) let the CUDA driver do what it does natively (PTX JIT if
+    // the fatbin contains compute-program text or a native sm_75 cubin),
+    // (2) never edit cubin entries unless the user explicitly opts into the
+    // hardware experiment below, and (3) fail closed with a logged reason.
+    auto scan = fatbin::rewrite_image(image, fatbin::scan_target());
+    if (!scan.valid) {
+        if (config().diagnostics)
+            logf("[nvs30-turing] CUDA fatbin #%ld: layout unknown; passing unmodified.\n", id);
+        return g_real_cu_load(module_out, image);
+    }
+    if (scan.stats.sm89_to_sm86) {
+        // Should never happen for a pure scan; guard the invariant anyway.
+        logf("[nvs30-turing] CUDA fatbin #%ld: scan modified bytes unexpectedly; aborting rewrite.\n", id);
+        return g_real_cu_load(module_out, image);
+    }
+    if (scan.stats.ptx || scan.stats.sm75_cubins) {
+        logf("[nvs30-turing] CUDA fatbin #%ld: entries=%u cubins=%u ptx=%u native-sm75=%u sm89=%u sm120=%u "
+             "-> driver can load/JIT for sm_75 natively; passing unmodified.\n",
+             id, scan.stats.entries, scan.stats.cubins, scan.stats.ptx,
+             scan.stats.sm75_cubins, scan.stats.sm89_cubins, scan.stats.sm120_left);
+        return g_real_cu_load(module_out, image);
+    }
+    if (!config().sm75_force_cubin_rewrite) {
+        logf("[nvs30-turing] CUDA fatbin #%ld: entries=%u cubins=%u sm89=%u sm120=%u ptx=0 -- no PTX and no "
+             "native sm_75 cubin. Refusing sm_89->sm_75 metadata retarget by default: the embedded SASS is "
+             "major 8 and undecodable on Turing (real barrier #2, see docs/SM75_PORT.md). "
+             "Set SM75_FORCE_CUBIN_REWRITE=1 to test the driver-side rejection on your GPU.\n",
+             id, scan.stats.entries, scan.stats.cubins,
+             scan.stats.sm89_cubins, scan.stats.sm120_left);
+        return g_real_cu_load(module_out, image);
+    }
+    const auto stamp = static_cast<fatbin::ElfStampMode>(config().sm75_elf_stamp);
+    auto rewritten = fatbin::rewrite_image(image, fatbin::turing_target(stamp));
+    if (!rewritten.valid || rewritten.stats.sm89_to_sm75 == 0) {
+        logf("[nvs30-turing] CUDA fatbin #%ld: forced rewrite produced nothing (valid=%d entries=%u); "
+             "passing unmodified.\n", id, rewritten.valid ? 1 : 0, rewritten.stats.entries);
+        return g_real_cu_load(module_out, image);
+    }
+    const int rc = g_real_cu_load(module_out, rewritten.bytes.data());
+    logf("[nvs30-turing] EXPERIMENTAL CUDA fatbin #%ld: forced sm89->75 bytes=%zu entries=%u cubins=%u "
+         "retargeted=%u elf-stamp=%u sm120-left=%u loader-rc=%d (rc=0 means libcuda accepted a "
+         "major-8 cubin for a major-7 device; kernel execution validity is still unproven)\n",
+         id, rewritten.bytes.size(), rewritten.stats.entries, rewritten.stats.cubins,
+         rewritten.stats.sm89_to_sm75, rewritten.stats.elf_headers,
+         rewritten.stats.sm120_left, rc);
+    return rc;
+}
+
 int WINAPI hooked_cu_module_load_data(void** module_out, const void* image) {
     if (!g_real_cu_load) return 3;
     std::scoped_lock lock(g_cuda_mutex);
     static long serial = 0;
     const long id = ++serial;
     ++g_cuda_intercepts;
+
+    const auto& plan = gpu::query();
+    if (plan.plan == gpu::Plan::PassthroughOnly) {
+        // Architecture unknown: the reference fail-closed policy forbids blind
+        // edits, so hand the image to the loader exactly as NvPresent passed
+        // it.  RTX 30 users never land here when nvcuda is reachable.
+        if (config().diagnostics)
+            logf("[nvs30] CUDA fatbin #%ld left unmodified: plan=PassthroughOnly (gpu=%s).\n",
+                 id, plan.source.c_str());
+        return g_real_cu_load(module_out, image);
+    }
+    if (plan.plan == gpu::Plan::TuringPolicy)
+        return load_fatbin_for_turing(id, module_out, image);
+
+    // gpu::Plan::AmpereRewrite -- historical path, byte-identical behaviour
+    // and log strings for RTX 30 regression parity.
     auto rewritten = fatbin::rewrite_sm89_to_sm86(image);
     if (!rewritten.valid || rewritten.stats.sm89_to_sm86 == 0) {
         if (config().diagnostics)
@@ -459,6 +531,19 @@ bool nvp_vtable(void* object) {
 
 bool initialize() {
     if (g_initialized.load()) return true;
+    {
+        const auto& gp = gpu::query();  // never name this `gpu`; it would shadow the namespace
+        logf("[nvs30] GPU detect: source=%s cc=%d.%d cuda-device=%u name='%s' plan=%s.\n",
+             gp.source.c_str(), gp.major, gp.minor, gp.selected_device, gp.name.c_str(),
+             gpu::plan_name(gp.plan));
+        if (gp.plan == gpu::Plan::TuringPolicy)
+            logf("[nvs30] SM75/Turing policy armed: ptx-jit=auto, forced-cubin-rewrite=%d, elf-stamp=%u "
+                 "(0=entry-only, 1=driver75, 2=mirror86).\n",
+                 config().sm75_force_cubin_rewrite ? 1 : 0, config().sm75_elf_stamp);
+        if (!gp.detected)
+            logf("[nvs30] WARNING: compute capability could not be determined (%s); "
+                 "fatbins will not be retargeted.\n", gp.source.c_str());
+    }
     const std::wstring path = locate_nvpresent();
     if (path.empty()) {
         logf("[nvs30] NvPresent64.dll was not found.\n");

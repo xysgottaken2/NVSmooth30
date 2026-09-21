@@ -29,9 +29,25 @@ def main() -> None:
     for alias in aliases:
         require(alias in proxy, f"proxy export implementation missing: {alias}")
 
-    source = "\n".join(path.read_text(encoding="utf-8") for path in ROOT.rglob("*.cpp"))
+    def tracked(pattern: str) -> list[pathlib.Path]:
+        return [path for path in ROOT.rglob(pattern)
+                if "build" not in path.relative_to(ROOT).parts and "__pycache__" not in path.relative_to(ROOT).parts]
+
+    source = "\n".join(path.read_text(encoding="utf-8") for path in tracked("*.cpp"))
+    source += "\n" + "\n".join(path.read_text(encoding="utf-8") for path in tracked("*.hpp"))
     require("0x06005604" in source, "correct SM86 ELF flags constant missing")
     require("0xBA55ED50" in source, "CUDA fatbin magic missing")
+    # SM75 port invariants: the Turing candidate stamps and the fail-closed
+    # policy must stay in place; the Ampere default behaviour must not drift.
+    require("0x05004B04" in source and "0x06004B04" in source,
+            "SM75 candidate ELF stamps missing")
+    require("kArchSm75" in source and "= 75" in source, "SM75 arch constant missing")
+    require("load_fatbin_for_turing" in source and "sm75_force_cubin_rewrite" in source,
+            "Turing fail-closed policy missing from the loader path")
+    require("Plan::AmpereRewrite" in source, "Ampere legacy plan wiring missing")
+    require("SM75_FORCE_CUBIN_REWRITE" in source, "SM75 opt-in env switch missing")
+    require("enable_testing" in cmake and "fatbin_tests" in cmake,
+            "portable fatbin unit tests are not wired into CMake")
     require("cuModuleLoadDataEx" not in source,
             "cuModuleLoadDataEx must not be redirected to the incompatible base ABI")
     lowered = source.lower()

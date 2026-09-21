@@ -105,32 +105,44 @@ def find_config(pe: PE, init_rva: int) -> int | None:
     return None
 
 
-def count_fatbins(data: bytes) -> tuple[int, int, int]:
+def count_fatbins(data: bytes) -> dict:
+    """Walk every recognisable fatbin and summarise its entry mix.
+
+    kind 1 = PTX text (the CUDA driver can JIT this for ANY architecture,
+    including sm_75/Turing); kind 2 = cubin/ELF (only executes when its arch
+    word matches the GPU, which is why the SM86 path retargets sm_89 text).
+    """
     magic = b"\x50\xed\x55\xba"
-    valid = sm89 = sm120 = 0
+    out = {"valid": 0, "sm89": 0, "sm120": 0, "sm75": 0, "ptx": 0, "fatbins": 0}
     cursor = 0
     while True:
         cursor = data.find(magic, cursor)
         if cursor < 0:
             break
+        out["fatbins"] += 1
         if cursor + 16 <= len(data):
             header = struct.unpack_from("<H", data, cursor + 6)[0]
             payload = struct.unpack_from("<Q", data, cursor + 8)[0]
             if 0x10 <= header <= 0x100 and payload <= 64 * 1024 * 1024 and cursor + header + payload <= len(data):
-                valid += 1
+                out["valid"] += 1
                 end = cursor + header + payload
                 entry = cursor + header
                 while entry + 0x20 <= end:
+                    kind = struct.unpack_from("<H", data, entry + 0)[0]
                     eh = struct.unpack_from("<I", data, entry + 4)[0]
                     ds = struct.unpack_from("<I", data, entry + 8)[0]
                     arch = struct.unpack_from("<I", data, entry + 0x1C)[0]
-                    sm89 += arch == 0x59
-                    sm120 += arch == 0x78
+                    if kind == 1:
+                        out["ptx"] += 1
+                    elif kind == 2:
+                        out["sm89"] += arch == 0x59
+                        out["sm120"] += arch == 0x78
+                        out["sm75"] += arch == 0x4B
                     if not 0x20 <= eh <= 0x400 or entry + eh + ds > end:
                         break
                     entry = (entry + eh + ds + 7) & ~7
         cursor += 4
-    return valid, sm89, sm120
+    return out
 
 
 def main() -> None:
@@ -142,14 +154,24 @@ def main() -> None:
     init_rva = exports.get("NVP_Init_D3D")
     gates = find_gate(pe)
     config = find_config(pe, init_rva) if init_rva is not None else None
-    fatbins, sm89, sm120 = count_fatbins(pe.data)
+    fat = count_fatbins(pe.data)
     print(f"file={args.dll}")
     print(f"sha256={hashlib.sha256(pe.data).hexdigest()}")
     print(f"NVP_Init_D3D={f'+0x{init_rva:x}' if init_rva is not None else 'missing'}")
     print(f"gate_candidates={len(gates)} " + " ".join(
         f"cmp_imm=+0x{cmp_rva:x},setge=+0x{setge_rva:x}" for cmp_rva, setge_rva in gates))
     print(f"config={f'+0x{config:x}' if config is not None else 'missing'}")
-    print(f"fatbins={fatbins} sm89_entries={sm89} sm120_entries={sm120}")
+    print(f"fatbins={fat['valid']} sm89_entries={fat['sm89']} sm120_entries={fat['sm120']}")
+    print(f"ptx_entries={fat['ptx']} sm75_entries={fat['sm75']}")
+    # SM75/Turing assessment (see docs/SM75_PORT.md):
+    if fat["sm75"]:
+        verdict = "sm75: native SM75 cubins present - Smooth Motion loads without retargeting"
+    elif fat["ptx"]:
+        verdict = "sm75: PTX present - the CUDA driver can JIT for sm_75 (NVSmooth30 passes it through)"
+    else:
+        verdict = ("sm75: cubins are sm_89/sm_120 only and the SASS is major 8; metadata "
+                   "retarget to sm_75 is blocked (fail-closed); see docs/SM75_PORT.md")
+    print(verdict)
     if init_rva is None or len(gates) != 1 or config is None:
         raise SystemExit(2)
 
