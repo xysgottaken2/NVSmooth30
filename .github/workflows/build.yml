@@ -86,6 +86,7 @@ jobs:
           copy /y build\Release\version.pdb package\ > nul 2>&1 || echo (pdb optional)
           copy examples\run_probe_rtx2060.bat package\run_probe_rtx2060.bat
           copy examples\run_probe_rtx2060_stageB.bat package\run_probe_rtx2060_stageB.bat
+          copy examples\run_probe_rtx2060_stageC.bat package\run_probe_rtx2060_stageC.bat
           copy README.md package\README.md
           mkdir package\docs
           copy docs\SM75_PORT.md package\docs\SM75_PORT.md

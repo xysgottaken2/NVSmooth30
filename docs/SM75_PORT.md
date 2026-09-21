@@ -161,6 +161,13 @@ differ is fatbin selection, and the log says exactly which branch fired
 * Both observed fatbins are `sm89=1 sm120=1 ptx=0` for this driver build:
   no PTX route → the fail-closed refusal is the correct default; the Stage-B
   `loader-rc` measurement remains the only outstanding datapoint.
+* **Stage B measured on hardware (entryonly stamp):** both fatbins returned
+  `loader-rc=300` (`CUDA_ERROR_INVALID_SOURCE` - libcuda rejects the module at
+  `cuModuleLoadData`). Rejection was clean: no TDR, probe continued running the
+  bridge end-to-end.  Entryonly leaves the cubin ELF declaring sm_89 while the
+  container entry claims sm_75, so the Stage-C stamp sweep (`driver75` /
+  `mirror86` self-consistent words) distinguishes an inconsistency rejection
+  from a genuine ISA validation.
 * `wrapper detected=0` in the probe is expected: NvPresent only attaches the
   swapchain wrapper when the application's driver profile enables Smooth
   Motion (NVIDIA Profile Inspector). Attaching NVPI to `nvs30_probe.exe` is
