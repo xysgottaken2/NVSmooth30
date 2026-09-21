@@ -28,8 +28,21 @@ jobs:
         shell: cmd
 
       - name: Build Release (FAILS the job if the DLL does not compile)
-        run: cmake --build build --config Release -- /m
+        run: |
+          set MSBUILD_DIAGNOSTIC=1
+          cmake --build build --config Release -- /v:minimal /nologo /m > build-output.txt 2>&1
+          echo exit-code=%errorlevel%
+          type build-output.txt
+          exit /b %errorlevel%
         shell: cmd
+
+      - name: Upload build output (always, so CI errors are readable without logs access)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-output-${{ github.run_id }}
+          path: build-output.txt
+          if-no-files-found: ignore
 
       - name: Unit tests (portable fatbin engine, no GPU required)
         run: ctest --test-dir build -C Release --output-on-failure

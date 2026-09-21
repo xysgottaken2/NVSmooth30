@@ -46,7 +46,7 @@ install(TARGETS NVSmooth30 RUNTIME DESTINATION . LIBRARY DESTINATION .)
 if(NVS30_BUILD_PROBE)
   # RTX 2060 smoke-test harness: a plain D3D11 window app used to validate the
   # injection + Present-hook + fatbin pipeline end to end on real hardware.
-  add_executable(nvs30_probe tools/probe/probe.cpp)
+  add_executable(nvs30_probe WIN32 tools/probe/probe.cpp)
   target_compile_features(nvs30_probe PRIVATE cxx_std_20)
   target_link_libraries(nvs30_probe PRIVATE d3d11 dxgi user32 shell32)
   set_target_properties(nvs30_probe PROPERTIES OUTPUT_NAME nvs30_probe)
