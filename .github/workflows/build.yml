@@ -56,9 +56,16 @@ jobs:
         shell: cmd
 
       - name: Repository invariant checks
-        run: python tools\validate_project.py > validate-output.txt 2>&1 || (type validate-output.txt & echo. & for /f "delims=" %L in ('findstr /i FAIL validate-output.txt') do @echo ::error::%L) & exit /b 1
-        shell: cmd
-        env: {}
+        shell: bash
+        run: |
+          echo "## validate_project.py" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python tools/validate_project.py 2>&1 | tee -a "$GITHUB_STEP_SUMMARY.tmp"
+          code=${PIPESTATUS[0]}
+          cat "$GITHUB_STEP_SUMMARY.tmp" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$GITHUB_STEP_SUMMARY.tmp"
+          exit $code
 
       - name: Python tool smoke
         run: |
