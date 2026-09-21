@@ -58,13 +58,17 @@ jobs:
       - name: Repository invariant checks
         shell: bash
         run: |
-          echo "## validate_project.py" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          python tools/validate_project.py 2>&1 | tee -a "$GITHUB_STEP_SUMMARY.tmp"
-          code=${PIPESTATUS[0]}
-          cat "$GITHUB_STEP_SUMMARY.tmp" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          rm -f "$GITHUB_STEP_SUMMARY.tmp"
+          python tools/validate_project.py > validate-output.txt 2>&1
+          code=$?
+          cat validate-output.txt
+          if [ $code -ne 0 ]; then
+            grepped=$(grep -a "FAIL" validate-output.txt | head -5)
+            if [ -z "$grepped" ]; then grepped=$(tail -5 validate-output.txt); fi
+            printf '%s\n' "$grepped" | sed 's/%/%25/g' | while IFS= read -r line; do
+              echo "::error::validator: ${line}"
+            done
+            echo "::error::validator: exit ${code} (see validate-output.txt)"
+          fi
           exit $code
 
       - name: Python tool smoke

@@ -29,7 +29,7 @@ def main() -> None:
     for alias in aliases:
         require(alias in proxy, f"proxy export implementation missing: {alias}")
 
-    def tracked(pattern: str) -> list[pathlib.Path]:
+    def tracked(pattern: str) -> list[Path]:
         return [path for path in ROOT.rglob(pattern)
                 if "build" not in path.relative_to(ROOT).parts and "__pycache__" not in path.relative_to(ROOT).parts]
 
@@ -82,7 +82,10 @@ def main() -> None:
 
     for path in ROOT.rglob("*.*"):
         if path.suffix.lower() in {".dll", ".exe", ".lib", ".pdb"}:
-            raise SystemExit(f"FAIL: binary unexpectedly included: {path.relative_to(ROOT)}")
+            rel = path.relative_to(ROOT)
+            if "build" in rel.parts or "__pycache__" in rel.parts:
+                continue  # local/CI build outputs are never committed
+            raise SystemExit(f"FAIL: binary unexpectedly included: {rel}")
 
     if len(sys.argv) > 1:
         completed = subprocess.run(
