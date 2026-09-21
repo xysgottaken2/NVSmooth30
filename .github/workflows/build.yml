@@ -56,8 +56,9 @@ jobs:
         shell: cmd
 
       - name: Repository invariant checks
-        run: python tools\validate_project.py
+        run: python tools\validate_project.py > validate-output.txt 2>&1 || (type validate-output.txt & echo. & for /f "delims=" %L in ('findstr /i FAIL validate-output.txt') do @echo ::error::%L) & exit /b 1
         shell: cmd
+        env: {}
 
       - name: Python tool smoke
         run: |
