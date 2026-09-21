@@ -34,13 +34,16 @@ jobs:
           echo BUILD-OK
         shell: cmd
 
-      - name: Upload build output (always, so CI errors are readable without logs access)
+      - name: Publish build output to the job summary (readable via API)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build-output-${{ github.run_id }}
-          path: build-output.txt
-          if-no-files-found: ignore
+        shell: bash
+        run: |
+          {
+            echo "## Windows MSVC build output (build-output.txt)"
+            echo '```'
+            tail -c 200000 build-output.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Unit tests (portable fatbin engine, no GPU required)
         run: ctest --test-dir build -C Release --output-on-failure
