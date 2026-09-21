@@ -1,0 +1,56 @@
+name: Turing PTX watchdog
+# Monthly probe of the newest NVIDIA Game Ready driver for the RTX 20 series.
+# A `ptx_entries>0` hit in NvPresent64.dll is the single event that would make
+# Smooth Motion work on Turing (driver JIT, no code change): the script drops
+# a flag and this workflow opens an issue.  All other runs are silent notes.
+on:
+  schedule:
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Explicit driver version to inspect (e.g. 617.44); empty = scan for newer than baseline"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe newest driver's NvPresent64.dll
+        run: |
+          python tools/ptx_watchdog.py \
+            --baseline 616.92 \
+            --work "$RUNNER_TEMP/drv" \
+            --state "$RUNNER_TEMP/state" \
+            ${{ github.event.inputs.version && format('--version "{0}"', github.event.inputs.version) || '' }}
+        shell: bash
+      - name: Open issue when PTX shows up
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flag="$RUNNER_TEMP/state/ptx-found.flag"
+          [ -f "$flag" ] || exit 0
+          ver=$(head -1 "$flag")
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --search "in:title PTX driver watchdog" --json number --jq '.[0].number' || true)
+          if [ -n "$existing" ]; then echo "issue #$existing already open"; exit 0; fi
+          {
+            echo "Driver **$ver** ships PTX in the NvPresent64 Smooth Motion fatbins."
+            echo "Turing (sm_75) can now JIT the original kernels: the NVSmooth30 pass-through path"
+            echo "(TuringPolicy in src/nvpresent.cpp) needs no code change - install the driver,"
+            echo "deploy version.dll, enable Smooth Motion in the NVPI profile, verify with"
+            echo "examples/run_probe_rtx2060.bat (expect 'PTX present' in the log)."
+            echo '```'
+            cat "$flag"
+            echo '```'
+          } > body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "PTX driver watchdog: $ver enables Smooth Motion JIT on Turing" \
+            --body-file body.md
+        shell: bash
