@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <cwchar>
 
 namespace nvs30 {
 namespace {
@@ -47,5 +48,31 @@ void load_config() {
     g_config.base_fps_cap = std::max(0.0f, env_float(L"SM86_BASE_FPS_CAP", 0.0f));
     g_config.bridge_linearize = env_bool(L"SM86_BRIDGE_LINEARIZE", false);
     g_config.nvpresent_path = env_string(L"SM86_NVPRESENT_PATH");
+
+    // Turing/SM75 port switches.  SM75_* is the primary spelling; SM86_*
+    // aliases keep existing launcher scripts working for Ampere users.
+    g_config.sm75_force_cubin_rewrite =
+        env_bool(L"SM75_FORCE_CUBIN_REWRITE",
+                 env_bool(L"SM86_SM75_FORCE_CUBIN_REWRITE", false));
+    {
+        const std::wstring stamp = env_string(L"SM75_ELF_STAMP");
+        if (_wcsicmp(stamp.c_str(), L"driver75") == 0 || _wcsicmp(stamp.c_str(), L"1") == 0)
+            g_config.sm75_elf_stamp = 1;
+        else if (_wcsicmp(stamp.c_str(), L"mirror86") == 0 || _wcsicmp(stamp.c_str(), L"2") == 0)
+            g_config.sm75_elf_stamp = 2;
+        else
+            g_config.sm75_elf_stamp = 0;
+    }
+    g_config.sm75_abi_probe =
+        env_bool(L"SM75_ABI_PROBE", env_bool(L"SM86_SM75_ABI_PROBE", false));
+    g_config.allow_cuda_init = env_bool(L"NVS30_ALLOW_CUDA_INIT", true);
+    g_config.force_cc = env_string(L"NVS30_FORCE_CC");
+    const std::wstring device = env_string(L"NVS30_CUDA_DEVICE");
+    if (!device.empty()) {
+        wchar_t* end{};
+        const long value = std::wcstol(device.c_str(), &end, 10);
+        if (end != device.c_str() && value >= 0 && value <= 64)
+            g_config.cuda_device = static_cast<int>(value);
+    }
 }
 }

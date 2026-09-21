@@ -1,0 +1,102 @@
+name: GPU validation (self-hosted RTX)
+
+# This workflow CANNOT run on GitHub-hosted runners: none of them has an
+# NVIDIA GPU. It is a dispatch template for the owner's self-hosted Windows
+# runner labeled [self-hosted, windows, nvs30-gpu] (e.g. the RTX 2060 test
+# box). It downloads the artifact produced by a "CI build" run, executes the
+# D3D11 smoke probe under NVSmooth30, and uploads nvsmooth30.log for triage.
+#
+# Validated on real hardware:
+#   * "GPU detect ... cc=7.5 ... plan=TuringPolicy" line present;
+#   * "NVP_Init_D3D=TRUE." present;
+#   * CUDA fatbin decision lines present (PTX pass-through / refusal /
+#     experimental retarget rc);
+#   * probe exit code 0 (game-usable Present path regardless of policy).
+#
+# See docs/SM75_PORT.md §5 for what each outcome means.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "CI build workflow run id whose artifact to test"
+        required: true
+        type: string
+      artifact_name:
+        description: "Artifact name to download"
+        required: false
+        default: nvsmooth30-windows-x64
+        type: string
+      force_experiment:
+        description: "Also run Stage B (SM75_FORCE_CUBIN_REWRITE=1, may TDR)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  rtx2060:
+    if: github.repository_owner == 'xysgottaken2'
+    name: RTX 2060 smoke test
+    runs-on: [self-hosted, windows, nvs30-gpu]
+    env:
+      NVS30_WORKDIR: nvs30-gpu-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download CI build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifact
+
+      - name: Unpack
+        run: |
+          $dir = "$PWD\$env:NVS30_WORKDIR"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item artifact\nvsmooth30-windows-x64.zip $dir
+          Expand-Archive -Path "$dir\nvsmooth30-windows-x64.zip" -DestinationPath $dir -Force
+          Get-ChildItem $dir | Format-Table Name,Length
+        shell: pwsh
+
+      - name: Stage A (safe: pass-through + policy logging)
+        run: |
+          .\nvs30_probe.exe --frames 240 | Tee-Object stageA.txt
+          "probe exit: $LASTEXITCODE" | Out-File -Append stageA.txt
+          if ($LASTEXITCODE -ne 0) { throw "nvs30_probe failed with $LASTEXITCODE" }
+        working-directory: ${{ env.NVS30_WORKDIR }}
+        shell: pwsh
+
+      - name: Stage B (EXPERIMENTAL forced relabel - opt-in only)
+        if: ${{ inputs.force_experiment }}
+        run: |
+          $env:SM75_FORCE_CUBIN_REWRITE = "1"
+          $env:SM75_ELF_STAMP = "entryonly"
+          .\nvs30_probe.exe --frames 120 | Tee-Object stageB.txt
+          "probe exit: $LASTEXITCODE" | Out-File -Append stageB.txt
+          # Stage B intentionally does not fail the job: a TDR/rc!=0 is data.
+        working-directory: ${{ env.NVS30_WORKDIR }}
+        shell: pwsh
+
+      - name: Check expected log lines
+        run: |
+          $log = Get-Content nvsmooth30.log -Raw
+          if ($log -notmatch "GPU detect") { throw "missing 'GPU detect' line" }
+          if ($log -notmatch "cc=7\.5") { Write-Warning "no cc=7.5 line - is the RTX 2060 the max-memory CUDA device? Set NVS30_CUDA_DEVICE." }
+          if ($log -notmatch "plan=TuringPolicy") { throw "Turing policy did not arm" }
+          if ($log -notmatch "NVP_Init_D3D=TRUE") { throw "NVP_Init_D3D failed - report the preceding lines" }
+          "OK: staged diagnostics present"
+        working-directory: ${{ env.NVS30_WORKDIR }}
+        shell: pwsh
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvsmooth30-rtx2060-logs-${{ github.run_id }}
+          path: |
+            ${{ env.NVS30_WORKDIR }}\nvsmooth30.log
+            ${{ env.NVS30_WORKDIR }}\stageA.txt
+            ${{ env.NVS30_WORKDIR }}\stageB.txt
+          if-no-files-found: warn

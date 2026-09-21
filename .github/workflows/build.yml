@@ -1,0 +1,146 @@
+name: CI build
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-dll:
+    name: Windows / MSVC version.dll + probe + tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          python --version
+        shell: cmd
+
+      - name: Configure (x64, Release-capable, tests + probe)
+        run: cmake -S . -B build -A x64 -DNVS30_BUILD_TESTS=ON
+        shell: cmd
+
+      - name: Build Release (FAILS the job if the DLL does not compile)
+        run: |
+          cmake --build build --config Release -- /v:minimal /nologo /m > build-output.txt 2>&1 || (type build-output.txt & echo BUILD-FAILED & exit /b 1)
+          type build-output.txt
+          echo BUILD-OK
+        shell: cmd
+
+      - name: Publish build output as annotations + summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Windows MSVC build output (build-output.txt)"
+            echo '```'
+            tail -c 200000 build-output.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Mirror compiler diagnostics into check-run annotations (API-readable).
+          if grep -qa "error" build-output.txt; then
+            grep -aE "error [A-Z]+[0-9]+" build-output.txt | head -30 | tr -d "\r" | sed "s/%/%25/g" | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          fi
+
+      - name: Unit tests (portable fatbin engine, no GPU required)
+        run: ctest --test-dir build -C Release --output-on-failure
+        shell: cmd
+
+      - name: Repository invariant checks
+        shell: bash
+        run: |
+          python tools/validate_project.py > validate-output.txt 2>&1
+          code=$?
+          cat validate-output.txt
+          if [ $code -ne 0 ]; then
+            grepped=$(grep -a "FAIL" validate-output.txt | head -5)
+            if [ -z "$grepped" ]; then grepped=$(tail -5 validate-output.txt); fi
+            printf '%s\n' "$grepped" | sed 's/%/%25/g' | while IFS= read -r line; do
+              echo "::error::validator: ${line}"
+            done
+            echo "::error::validator: exit ${code} (see validate-output.txt)"
+          fi
+          exit $code
+
+      - name: Python tool smoke
+        run: |
+          python -m py_compile tools\inspect_nvp.py tools\validate_project.py tools\make_fixtures.py
+          python tools\inspect_nvp.py --help > nul
+          echo inspector-usage-ok
+        shell: cmd
+
+      - name: Package artifact
+        run: |
+          mkdir package
+          copy build\Release\version.dll package\version.dll
+          copy build\Release\nvs30_probe.exe package\nvs30_probe.exe
+          copy /y build\Release\version.pdb package\ > nul 2>&1 || echo (pdb optional)
+          copy examples\run_probe_rtx2060.bat package\run_probe_rtx2060.bat
+          copy examples\run_probe_rtx2060_stageB.bat package\run_probe_rtx2060_stageB.bat
+          copy examples\run_probe_rtx2060_stageC.bat package\run_probe_rtx2060_stageC.bat
+          copy examples\run_probe_rtx2060_abi.bat package\run_probe_rtx2060_abi.bat
+          copy README.md package\README.md
+          mkdir package\docs
+          copy docs\SM75_PORT.md package\docs\SM75_PORT.md
+          powershell -NoProfile -Command "Compress-Archive -Path package\* -DestinationPath nvsmooth30-windows-x64.zip -Force"
+        shell: cmd
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvsmooth30-windows-x64
+          path: nvsmooth30-windows-x64.zip
+          if-no-files-found: error
+
+  linux-portable-tests:
+    name: Linux / portable fatbin core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (tests-only on non-Windows hosts)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+        shell: bash
+
+      - name: Build
+        run: cmake --build build -j
+        shell: bash
+
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+        shell: bash
+
+  python-tools:
+    name: Python tooling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile-check tools
+        run: python -m py_compile tools/*.py
+        shell: bash
+      - name: Repository invariants
+        run: python tools/validate_project.py
+        shell: bash
+      - name: CMake source paths exist
+        run: |
+          python - <<'PY'
+          import re, pathlib
+          root = pathlib.Path(".")
+          cmake = (root / "CMakeLists.txt").read_text()
+          missing = [p for p in re.findall(r"\b(?:src|include|tests|tools)/[A-Za-z0-9_./-]+\.(?:cpp|hpp|def)", cmake)
+                     if not (root / p).is_file()]
+          assert not missing, f"missing CMake sources: {missing}"
+          print("all CMake-listed sources present")
+          PY
+        shell: bash

@@ -7,6 +7,13 @@ namespace {
 DWORD WINAPI bootstrap(void*) {
     nvs30::load_config();
     nvs30::log_open();
+    {
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        nvs30::logf("[nvs30] ---- session %04u-%02u-%02u %02u:%02u:%02u pid=%lu ----\n",
+                    now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+                    GetCurrentProcessId());
+    }
     const auto& c = nvs30::config();
     nvs30::logf("[nvs30] startup %s: OSD=%d D3D11Bridge=%d ForceVSync=%d Diagnostics=%d LowLatency=%d HalfRefreshCap=%d BaseFpsCap=%.3f Linearize=%d\n",
                 NVS30_VERSION, c.enable_osd, c.enable_d3d11_bridge, c.force_vsync,

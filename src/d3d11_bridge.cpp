@@ -387,8 +387,24 @@ bool D3D11Bridge::initialize(IDXGISwapChain* source, HWND hwnd) {
     shadow_desc.Flags = 0;
     ComPtr<IDXGISwapChain1> shadow1;
     const auto cuda_before_swapchain = nvpresent::cuda_intercept_count();
-    const HRESULT swap_hr = factory->CreateSwapChainForHwnd(queue12_.Get(), hwnd_, &shadow_desc,
-                                                             nullptr, nullptr, &shadow1);
+    HRESULT swap_hr = factory->CreateSwapChainForHwnd(queue12_.Get(), hwnd_, &shadow_desc,
+                                                      nullptr, nullptr, &shadow1);
+    if (FAILED(swap_hr) && game_factory) {
+        // DXGI binds at most one flip-model chain per HWND and factory
+        // bookkeeping matters: E_ACCESSDENIED here means the window is
+        // already owned (typically the game's own chain).  The reference
+        // bridge only ever used the fresh factory and won on RTX 30 test
+        // titles; retrying through the game's factory is a strict failure-
+        // path addition that cannot change any successful Ampere run.
+        logf("[nvs30-bridge] CreateSwapChainForHwnd(shadow) failed 0x%08X on the fresh factory; "
+             "retrying through the game factory on the same HWND.\n", static_cast<unsigned>(swap_hr));
+        shadow1.Reset();
+        swap_hr = game_factory->CreateSwapChainForHwnd(queue12_.Get(), hwnd_, &shadow_desc,
+                                                        nullptr, nullptr, &shadow1);
+        if (SUCCEEDED(swap_hr))
+            logf("[nvs30-bridge] shadow chain created on the game factory; NvPresent sees the same "
+                 "HWND-owner factory as the game.\n");
+    }
     const auto cuda_after_swapchain = nvpresent::cuda_intercept_count();
     dxgi::set_internal_creation(false);
     if (FAILED(swap_hr)) {
