@@ -22,6 +22,9 @@ if not exist nvs30_probe.exe (
   exit /b 1
 )
 
+rem Start a clean log for this run; keep the previous one for comparison.
+if exist nvsmooth30.log move /y nvsmooth30.log nvsmooth30.prev.log >nul
+
 set SM86_ENABLE_OSD=1
 set SM86_DIAGNOSTICS=1
 set SM86_ENABLE_D3D11_BRIDGE=1

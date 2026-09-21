@@ -150,6 +150,25 @@ differ is fatbin selection, and the log says exactly which branch fired
    by the new staged logs (`gate located` … `NVP_Init_D3D=TRUE` … wrapper
    activation … `[nvs30] Smooth Motion activated`).
 
+## 5b. Confirmed by the first RTX 2060 field logs (2026-09-21)
+
+* Injection, GPU detection (`cc=7.5 -> TuringPolicy`), dynamic gate/config
+  discovery (`+0xc41f/+0xc437/+0x7f0cd0/+0x7fb628` — byte-identical to the
+  reference fingerprint on the user's driver), `NVP_Init_D3D=TRUE` on Turing,
+  `0x12a5` self-enabling, CUDA interception (2 fatbin intercepts) and the
+  **D3D11→D3D12 bridge** (after the DISCARD-chain fix) are all verified
+  working on real SM75 hardware.
+* Both observed fatbins are `sm89=1 sm120=1 ptx=0` for this driver build:
+  no PTX route → the fail-closed refusal is the correct default; the Stage-B
+  `loader-rc` measurement remains the only outstanding datapoint.
+* `wrapper detected=0` in the probe is expected: NvPresent only attaches the
+  swapchain wrapper when the application's driver profile enables Smooth
+  Motion (NVIDIA Profile Inspector). Attaching NVPI to `nvs30_probe.exe` is
+  therefore the additional "pipeline reaches kernels" experiment.
+* Stage B must be launched via `run_probe_rtx2060_stageB.bat` (double-click):
+  Explorer cannot pass `--force-experiment`, and a run whose log says
+  `forced-cubin-rewrite=0` did NOT exercise the experiment.
+
 ## 6. Known limitations
 
 * **Barrier #1 (resolved, artificial):** the `[rcx+14h]>=2/3` whitelist — already forced
