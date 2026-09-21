@@ -280,6 +280,10 @@ routes, each closed for a different reason:
    and carries per-game/per-card community validation. Out of scope here:
    it is game-file injection (AC-visible), not driver patching, and does not
    provide frame generation - Smooth Motion's niche (and its wall) stand.
+   A capture+overlay Turing frame generator built from open parts (OFA via
+   nvofapi, warp/blend, 2:1 pacing) is feasible as its own project and is
+   specced in `docs/TURING_FG_APP_BLUEPRINT.md`; it would be LSFG-class, not
+   Smooth Motion, and changes nothing in this port's verdicts.
 
 ## 6. Known limitations
 
