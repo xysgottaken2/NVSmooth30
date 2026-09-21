@@ -45,7 +45,10 @@ powershell -NoProfile -Command "Get-Content .\nvsmooth30.log | Select-String -Pa
 
 echo.
 echo LEITURA: para CADA modo procure a linha EXPERIMENTAL ... loader-rc=N
-echo  - todos os modos rc=300 ... libcuda valida a ISA; barreira final CONFIRMADA (documentada, zero risco)
-echo  - algum modo rc=0       ... loader aceitou o par consistente; decisao de teste em jogo fica explicita
+echo  - mode 0 rc=300                ... par inconsistente rejeitado no load (limpo, sem risco)
+echo  - mode 1/2 rc=0 + exit -1073741819 (0xC0000005)
+echo        ... CONFIRMADO na pratica: loader aceita o par consistente, o processo cai
+echo            no primeiro uso dos kernels (SASS major-8 nao decodifica em Turing).
+echo            Este e o desfecho esperado e ja documentado em docs/SM75_PORT.md sec.5c.
 pause
 endlocal

@@ -277,11 +277,23 @@ int WINAPI load_fatbin_for_turing(long id, void** module_out, const void* image)
     }
     const int rc = g_real_cu_load(module_out, rewritten.bytes.data());
     logf("[nvs30-turing] EXPERIMENTAL CUDA fatbin #%ld: forced sm89->75 bytes=%zu entries=%u cubins=%u "
-         "retargeted=%u elf-stamp=%u sm120-left=%u loader-rc=%d (rc=0 means libcuda accepted a "
-         "major-8 cubin for a major-7 device; kernel execution validity is still unproven)\n",
+         "retargeted=%u elf-stamp=%u sm120-left=%u loader-rc=%d\n",
          id, rewritten.bytes.size(), rewritten.stats.entries, rewritten.stats.cubins,
          rewritten.stats.sm89_to_sm75, rewritten.stats.elf_headers,
          rewritten.stats.sm120_left, rc);
+    if (rc == 0 && rewritten.stats.elf_headers != 0) {
+        // Measured on the first RTX 2060 field rig (Stage C sweep, 2026-09-21):
+        // with a SELF-CONSISTENT entry+ELF relabel libcuda loads the module
+        // (rc=0), and the process then dies with STATUS_ACCESS_VIOLATION the
+        // moment NvPresent invokes a kernel - the major-8 SASS words are
+        // undecodable by the Turing instruction front end.  A stamp mode of
+        // 0 (entry-only, inconsistent pair) is instead rejected at load with
+        // CUDA_ERROR_INVALID_SOURCE (300).  Both outcomes are in-process only;
+        // nothing on disk is ever modified.
+        logf("[nvs30-turing] loader ACCEPTED the consistent relabel. On Turing this is the "
+             "measured pre-crash state: kernel execution faults (host access violation). "
+             "Expect instability for anything that launches these kernels; probe-only experiment.\n");
+    }
     return rc;
 }
 
@@ -538,7 +550,9 @@ bool initialize() {
              gpu::plan_name(gp.plan));
         if (gp.plan == gpu::Plan::TuringPolicy)
             logf("[nvs30] SM75/Turing policy armed: ptx-jit=auto, forced-cubin-rewrite=%d, elf-stamp=%u "
-                 "(0=entry-only, 1=driver75, 2=mirror86).\n",
+                 "(0=entry-only, 1=driver75, 2=mirror86). Measured on RTX 2060 hardware: "
+                 "mode 0 -> libcuda rc=300 clean reject; modes 1-2 -> loader rc=0 then host "
+                 "access-violation on first kernel use. No stamp combination executes on major 7.\n",
                  config().sm75_force_cubin_rewrite ? 1 : 0, config().sm75_elf_stamp);
         if (!gp.detected)
             logf("[nvs30] WARNING: compute capability could not be determined (%s); "

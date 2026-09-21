@@ -176,6 +176,33 @@ differ is fatbin selection, and the log says exactly which branch fired
   Explorer cannot pass `--force-experiment`, and a run whose log says
   `forced-cubin-rewrite=0` did NOT exercise the experiment.
 
+## 5c. Stage C stamp sweep - FINAL measured result on the RTX 2060 (2026-09-21)
+
+Probe exit codes per stamp mode (build `f45cf15`):
+
+| Mode | ELF word | libcuda at `cuModuleLoadData` | Process outcome |
+|---|---|---|---|
+| 0 entryonly | unchanged (still sm_89) | `rc=300` `CUDA_ERROR_INVALID_SOURCE` | clean, probe exits 0, bridge stable |
+| 1 driver75 | `0x05004B04` | **`rc=0` - module LOADED** (fatbin #19 logged) | `0xC0000005` STATUS_ACCESS_VIOLATION |
+| 2 mirror86 | `0x06004B04` | same | same |
+
+Conclusions, now with hardware evidence at every stage:
+
+1. libcuda's earlier rejection was a **metadata self-consistency check**, not ISA
+   validation: with entry arch and ELF e_flags both claiming sm_75, the driver
+   loader accepts the module on a Turing device.
+2. Acceptance is as far as metadata can carry the port: the first kernel
+   invocation faults the host process, because the embedded instruction stream
+   is SASS major 8 and the Turing front end cannot decode it. This is the
+   **terminal barrier**; no flag, stamp, offset or profile value can cross it.
+3. The only remaining theoretically-working Turing routes are (a) a driver
+   build whose Smooth Motion fatbins ship PTX (check older/newer
+   `NvPresent64.dll` with `tools\inspect_nvp.py`; NVSmooth30 auto-JITs those -
+   already implemented and unit-tested), or (b) a general SASS recompiler,
+   which this project's charter (and the port brief) explicitly excludes.
+4. The default product behavior stays fail-closed (mode-0-equivalent refusal,
+   game stable); the relabel modes remain probe-only opt-ins.
+
 ## 6. Known limitations
 
 * **Barrier #1 (resolved, artificial):** the `[rcx+14h]>=2/3` whitelist — already forced
