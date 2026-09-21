@@ -226,6 +226,14 @@ PTX-hunt winning condition (both must hold on the same DLL):
 kernels via the driver's JIT (auto-used by the implemented pass-through),
 while a resolvable gate lets the patcher arm the policy at all.
 
+Birth-era candidates identified for the final probe: 590.26 shader-model-6.9
+developer preview (guru3d thread points at
+`developer.nvidia.com/downloads/shadermodel6-9-preview-driver`) and, if the
+portal link is dead, the earliest public WHQL after SM's RTX-40 birth:
+591.74 (2026-01) / 596.21 (2026-04), all reachable via TechPowerUp's
+"+200 previous versions" archive page. Inspect only
+`Display.Driver\NvPresent64.dll` (7-Zip single-file extract; no install).
+
 Status: hunt closed negative (595.71 + 616.92 both fail the `ptx_entries`
 condition). The auto-JIT route stays dormant in the codebase - armed,
 unit-tested, and ready without source changes should a PTX-carrying driver
