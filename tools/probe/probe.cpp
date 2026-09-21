@@ -15,6 +15,7 @@
 #define UNICODE
 #endif
 #include <windows.h>
+#include <winver.h>
 #include <d3d11.h>
 #include <dxgi1_6.h>
 #include <shellapi.h>
@@ -25,6 +26,7 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "version.lib")
 
 namespace {
 struct Options {
@@ -63,7 +65,25 @@ bool parse(int argc, wchar_t** argv, Options& o) {
 
 }
 
+namespace {
+// CRITICAL for the harness: NVSmooth30 injects itself as an app-directory
+// `version.dll` proxy, and the OS only loads that DLL when the executable
+// imports it.  Touch the version APIs before anything else so the proxy's
+// DllMain bootstrap runs (and creates nvsmooth30.log) in this process.
+// Without this import the probe would run WITHOUT NVSmooth30 attached.
+void force_version_proxy_load() {
+    wchar_t exe[MAX_PATH]{};
+    if (!GetModuleFileNameW(nullptr, exe, MAX_PATH)) return;
+    DWORD handle = 0;
+    const DWORD size = GetFileVersionInfoSizeW(exe, &handle);
+    std::wprintf(L"[probe] self version-info size=%lu - version.dll proxy must have loaded now.\n",
+                 static_cast<unsigned long>(size));
+}
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
+    force_version_proxy_load();
+    Sleep(400);  // give the bootstrap thread a moment to open the log + patch gates
     Options opt;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
