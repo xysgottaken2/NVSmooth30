@@ -234,8 +234,16 @@ portal link is dead, the earliest public WHQL after SM's RTX-40 birth:
 "+200 previous versions" archive page. Inspect only
 `Display.Driver\NvPresent64.dll` (7-Zip single-file extract; no install).
 
-Status: hunt closed negative (595.71 + 616.92 both fail the `ptx_entries`
-condition). The auto-JIT route stays dormant in the codebase - armed,
+Birth-era measurement (owner-obtained NvPresent64.dll, sha256
+`ae1d65a4563bd5be...aa6cb8be`, earlier payload than 595.71: `fatbins=20`,
+every one an sm_89+sm_120 pair): `ptx_entries=0 sm75_entries=0`. The
+inspector still resolved `gate_candidates=1` (+0xb63f/+0xb657) and
+`config=+0x63b000` in that build, confirming the pattern scanners (not
+raw addresses) track older driver layouts as designed.
+=> The feature was BORN with zero Turing capability: it is not a payload that
+lost sm_75/PTX support in later size-slimming passes - there was nothing to
+remove. Hunt status: closed negative at birth (20-fatbin era), mid (595.71,
+37 fatbins) and current (616.92 live) - four independent measurements. The auto-JIT route stays dormant in the codebase - armed,
 unit-tested, and ready without source changes should a PTX-carrying driver
 ever become obtainable for Turing.
 
