@@ -63,6 +63,8 @@ void load_config() {
         else
             g_config.sm75_elf_stamp = 0;
     }
+    g_config.sm75_abi_probe =
+        env_bool(L"SM75_ABI_PROBE", env_bool(L"SM86_SM75_ABI_PROBE", false));
     g_config.allow_cuda_init = env_bool(L"NVS30_ALLOW_CUDA_INIT", true);
     g_config.force_cc = env_string(L"NVS30_FORCE_CC");
     const std::wstring device = env_string(L"NVS30_CUDA_DEVICE");

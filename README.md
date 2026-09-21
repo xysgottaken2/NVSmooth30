@@ -38,6 +38,7 @@ that are valid on SM86. Unknown fatbin layouts are rejected instead of edited.
 On SM75/Turing the retarget is additionally restricted by the SASS major-version
 barrier: the loader only ever receives pass-through images unless you enable the
 explicit `SM75_FORCE_CUBIN_REWRITE` experiment, and PTX-carrying fatbins are
+- `SM75_ABI_PROBE=1` - path-3 contract survey: replaces intercepted modules with JIT'd sm_75 no-op stubs and logs every NvPresent kernel contract under `[nvs30-abi]`; never for gameplay (docs/SM75_PORT.md section 5f).
 handed to the driver's own JIT (the supported Turing route, when available).
 
 Hardware field status (measured on RTX 2060, driver 616.92): every artificial

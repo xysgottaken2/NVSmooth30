@@ -14,6 +14,38 @@ using CuModuleLoadData = int (WINAPI*)(void** module, const void* image);
 using GetProcAddressFn = FARPROC (WINAPI*)(HMODULE, LPCSTR);
 using NvpInitD3D = BOOL (WINAPI*)();
 
+// --- SM75 ABI probe (docs/TURING_FG_APP_BLUEPRINT.md, path-3 milestone 0) ---
+using CuModuleGetFunction = int (WINAPI*)(void** func, void* module, const char* name);
+using CuLaunchKernel = int (WINAPI*)(void* func, unsigned gx, unsigned gy, unsigned gz,
+                                    unsigned bx, unsigned by, unsigned bz, unsigned shmem,
+                                    void* stream, void** params, void** extra);
+using CuGraphAddKernelNode = int (WINAPI*)(void** node, void* graph, const void* deps,
+                                           unsigned num_deps, const void* params);
+using CuGraphLaunch = int (WINAPI*)(void* exec_graph, void* stream);
+using CuMemAlloc = int (WINAPI*)(unsigned long long* dptr, std::size_t bytes);
+
+constexpr char kProbePtx[] =
+    "version 8.5\n"
+    "target sm_75\n"
+    ".address_size 64\n"
+    ".visible .entry nvs30_abi_stub()\n"
+    "{\n"
+    "    ret;\n"
+    "}\n";
+
+CuModuleGetFunction g_real_get_func{};
+CuLaunchKernel g_real_launch{};
+CuGraphAddKernelNode g_real_graph_add{};
+CuGraphAddKernelNode g_real_graph_add_v2{};
+CuGraphLaunch g_real_graph_launch{};
+CuMemAlloc g_real_mem_alloc_v2{};
+struct ProbeSlot { void** slot; void* real; };
+std::vector<ProbeSlot> g_probe_slots;
+std::atomic_bool g_probe_installed{};
+void* g_abi_stub_module{};
+std::atomic_uint64_t g_abi_getfn{}, g_abi_launch{}, g_abi_nodes{}, g_abi_glaunch{}, g_abi_mem{};
+void install_probe_hooks();
+
 HMODULE g_nvp{};
 CuModuleLoadData g_real_cu_load{};
 GetProcAddressFn g_real_getproc{};
@@ -241,6 +273,23 @@ int WINAPI load_fatbin_for_turing(long id, void** module_out, const void* image)
     // the fatbin contains compute-program text or a native sm_75 cubin),
     // (2) never edit cubin entries unless the user explicitly opts into the
     // hardware experiment below, and (3) fail closed with a logged reason.
+    if (config().sm75_abi_probe) {
+        install_probe_hooks();
+        void* probe_module{};
+        const int stub_rc = g_real_cu_load(&probe_module, kProbePtx);
+        if (stub_rc == 0 && probe_module) {
+            g_abi_stub_module = probe_module;
+            *module_out = probe_module;
+            logf("[nvs30-turing] ABI-PROBE fatbin #%ld: real image intercepted; sm_75 no-op stub module "
+                 "loaded by the driver's own JIT (native ISA, no decode barrier). Every GetFunction/"
+                 "Launch/Graph/Alloc NvPresent requests from here on is logged under [nvs30-abi] "
+                 "(first 64 per category). This is the contract survey a native-Turing reimplementation "
+                 "must satisfy; it generates no frames.\n", id);
+            return 0;
+        }
+        logf("[nvs30-turing] ABI-PROBE: stub JIT load failed rc=%d; falling back to the normal SM75 policy.\n",
+             stub_rc);
+    }
     auto scan = fatbin::rewrite_image(image, fatbin::scan_target());
     if (!scan.valid) {
         if (config().diagnostics)
@@ -297,6 +346,113 @@ int WINAPI load_fatbin_for_turing(long id, void** module_out, const void* image)
     return rc;
 }
 
+struct ProbeNodeParams { // CUDA_KERNEL_NODE_PARAMS (v2 shares this prefix)
+    void* func;
+    unsigned gridDimX, gridDimY, gridDimZ;
+    unsigned blockDimX, blockDimY, blockDimZ;
+    unsigned sharedMemBytes;
+    void** kernelParams;
+    void** extra;
+};
+
+void log_probe_node(const char* which, const void* params, unsigned num_deps) {
+    const unsigned long n = static_cast<unsigned long>(++g_abi_nodes);
+    if (n > 64) return;
+    if (!params) {
+        logf("[nvs30-abi] %s #%lu: (null params) deps=%u\n", which, n, num_deps);
+        return;
+    }
+    const auto* k = static_cast<const ProbeNodeParams*>(params);
+    logf("[nvs30-abi] %s #%lu: grid=%ux%ux%u block=%ux%ux%u shmem=%u deps=%u kernelParams=%d\n",
+         which, n, k->gridDimX, k->gridDimY, k->gridDimZ, k->blockDimX, k->blockDimY, k->blockDimZ,
+         k->sharedMemBytes, num_deps, k->kernelParams ? 1 : 0);
+}
+
+int WINAPI hooked_cu_module_get_function(void** func_out, void* module, const char* name) {
+    const unsigned long n = static_cast<unsigned long>(++g_abi_getfn);
+    if (module == g_abi_stub_module && g_real_get_func) {
+        const int rc = g_real_get_func(func_out, module, "nvs30_abi_stub");
+        if (n <= 64)
+            logf("[nvs30-abi] GetFunction #%lu: '%s' -> %s\n", n, name ? name : "(null)",
+                 rc == 0 ? "no-op stub" : "STUB RESOLVE FAILED");
+        return rc;
+    }
+    if (n <= 64)
+        logf("[nvs30-abi] GetFunction #%lu: '%s' (foreign module; passing through)\n", n, name ? name : "(null)");
+    return g_real_get_func ? g_real_get_func(func_out, module, name) : 3;
+}
+
+int WINAPI hooked_cu_launch_kernel(void* func, unsigned gx, unsigned gy, unsigned gz,
+                                   unsigned bx, unsigned by, unsigned bz, unsigned shmem,
+                                   void* stream, void** params, void** extra) {
+    const unsigned long n = static_cast<unsigned long>(++g_abi_launch);
+    if (n <= 64)
+        logf("[nvs30-abi] cuLaunchKernel #%lu: grid=%ux%ux%u block=%ux%ux%u shmem=%u kernelParams=%d extra=%d\n",
+             n, gx, gy, gz, bx, by, bz, shmem, params ? 1 : 0, extra ? 1 : 0);
+    return g_real_launch ? g_real_launch(func, gx, gy, gz, bx, by, bz, shmem, stream, params, extra) : 3;
+}
+
+int WINAPI hooked_cu_graph_add_kernel_node(void** node, void* graph, const void* deps,
+                                           unsigned num_deps, const void* params) {
+    log_probe_node("GraphAddKernelNode", params, num_deps);
+    return g_real_graph_add ? g_real_graph_add(node, graph, deps, num_deps, params) : 3;
+}
+
+int WINAPI hooked_cu_graph_add_kernel_node_v2(void** node, void* graph, const void* deps,
+                                               unsigned num_deps, const void* params) {
+    log_probe_node("GraphAddKernelNode_v2", params, num_deps);
+    return g_real_graph_add_v2 ? g_real_graph_add_v2(node, graph, deps, num_deps, params) : 3;
+}
+
+int WINAPI hooked_cu_graph_launch(void* exec_graph, void* stream) {
+    const unsigned long n = static_cast<unsigned long>(++g_abi_glaunch);
+    if (n <= 64) logf("[nvs30-abi] cuGraphLaunch #%lu\n", n);
+    return g_real_graph_launch ? g_real_graph_launch(exec_graph, stream) : 3;
+}
+
+int WINAPI hooked_cu_mem_alloc(unsigned long long* dptr, std::size_t bytes) {
+    const unsigned long n = static_cast<unsigned long>(++g_abi_mem);
+    if (n <= 64)
+        logf("[nvs30-abi] cuMemAlloc #%lu: size=%llu bytes\n", n, static_cast<unsigned long long>(bytes));
+    return g_real_mem_alloc_v2 ? g_real_mem_alloc_v2(dptr, bytes) : 3;
+}
+
+void install_probe_hooks() {
+    if (g_probe_installed.exchange(true)) return;
+    struct Entry { const char* name; void* hook; void** real; };
+    const Entry entries[] = {
+        {"cuModuleGetFunction", reinterpret_cast<void*>(&hooked_cu_module_get_function),
+         reinterpret_cast<void**>(&g_real_get_func)},
+        {"cuLaunchKernel", reinterpret_cast<void*>(&hooked_cu_launch_kernel),
+         reinterpret_cast<void**>(&g_real_launch)},
+        {"cuGraphAddKernelNode", reinterpret_cast<void*>(&hooked_cu_graph_add_kernel_node),
+         reinterpret_cast<void**>(&g_real_graph_add)},
+        {"cuGraphAddKernelNode_v2", reinterpret_cast<void*>(&hooked_cu_graph_add_kernel_node_v2),
+         reinterpret_cast<void**>(&g_real_graph_add_v2)},
+        {"cuGraphLaunch", reinterpret_cast<void*>(&hooked_cu_graph_launch),
+         reinterpret_cast<void**>(&g_real_graph_launch)},
+        {"cuMemAlloc_v2", reinterpret_cast<void*>(&hooked_cu_mem_alloc),
+         reinterpret_cast<void**>(&g_real_mem_alloc_v2)},
+    };
+    HMODULE cuda = GetModuleHandleW(L"nvcuda.dll");
+    unsigned patched = 0;
+    for (const auto& e : entries) {
+        void** slot = pe::find_import_slot(g_nvp, "nvcuda.dll", e.name);
+        if (slot && *slot) {
+            *e.real = *slot;
+            if (pe::write_pointer(slot, e.hook)) {
+                g_probe_slots.push_back({slot, *e.real});
+                ++patched;
+            }
+            continue;
+        }
+        if (cuda && !*e.real)
+            *e.real = reinterpret_cast<void*>(GetProcAddress(cuda, e.name));
+    }
+    logf("[nvs30-abi] probe hooks: %u/6 entry points IAT-patched; %s route via GetProcAddress override "
+         "when resolved later.\n", patched, patched < 6 ? "remaining names" : "none outstanding");
+}
+
 int WINAPI hooked_cu_module_load_data(void** module_out, const void* image) {
     if (!g_real_cu_load) return 3;
     std::scoped_lock lock(g_cuda_mutex);
@@ -336,9 +492,24 @@ int WINAPI hooked_cu_module_load_data(void** module_out, const void* image) {
 }
 
 FARPROC WINAPI hooked_get_proc_address(HMODULE module, LPCSTR name) {
-    if (reinterpret_cast<std::uintptr_t>(name) > 0xffff && name &&
-        std::strcmp(name, "cuModuleLoadData") == 0)
-        return reinterpret_cast<FARPROC>(&hooked_cu_module_load_data);
+    if (reinterpret_cast<std::uintptr_t>(name) > 0xffff && name) {
+        if (std::strcmp(name, "cuModuleLoadData") == 0)
+            return reinterpret_cast<FARPROC>(&hooked_cu_module_load_data);
+        if (config().sm75_abi_probe) {
+            if (std::strcmp(name, "cuModuleGetFunction") == 0)
+                return reinterpret_cast<FARPROC>(&hooked_cu_module_get_function);
+            if (std::strcmp(name, "cuLaunchKernel") == 0)
+                return reinterpret_cast<FARPROC>(&hooked_cu_launch_kernel);
+            if (std::strcmp(name, "cuGraphAddKernelNode") == 0)
+                return reinterpret_cast<FARPROC>(&hooked_cu_graph_add_kernel_node);
+            if (std::strcmp(name, "cuGraphAddKernelNode_v2") == 0)
+                return reinterpret_cast<FARPROC>(&hooked_cu_graph_add_kernel_node_v2);
+            if (std::strcmp(name, "cuGraphLaunch") == 0)
+                return reinterpret_cast<FARPROC>(&hooked_cu_graph_launch);
+            if (std::strcmp(name, "cuMemAlloc_v2") == 0)
+                return reinterpret_cast<FARPROC>(&hooked_cu_mem_alloc);
+        }
+    }
     return g_real_getproc(module, name);
 }
 
@@ -509,6 +680,9 @@ void restore_all() {
             if (slot) pe::write_pointer(slot, reinterpret_cast<void*>(g_real_cu_load));
     }
     g_cuda_slots.clear();
+    for (auto& probe : g_probe_slots)
+        if (probe.slot) pe::write_pointer(probe.slot, probe.real);
+    g_probe_slots.clear();
     if (g_getproc_slot && g_real_getproc)
         pe::write_pointer(g_getproc_slot, reinterpret_cast<void*>(g_real_getproc));
 }
@@ -554,6 +728,10 @@ bool initialize() {
                  "mode 0 -> libcuda rc=300 clean reject; modes 1-2 -> loader rc=0 then host "
                  "access-violation on first kernel use. No stamp combination executes on major 7.\n",
                  config().sm75_force_cubin_rewrite ? 1 : 0, config().sm75_elf_stamp);
+        if (gp.plan == gpu::Plan::TuringPolicy && config().sm75_abi_probe)
+            logf("[nvs30] ABI-PROBE armed: intercepted NvPresent CUDA modules become sm_75 no-op stubs "
+                 "(driver-JIT native ISA); every function/launch/graph/allocation contract is logged under "
+                 "[nvs30-abi]. Survey mode for path 3; generates no frames; never for gameplay.\n");
         if (!gp.detected)
             logf("[nvs30] WARNING: compute capability could not be determined (%s); "
                  "fatbins will not be retargeted.\n", gp.source.c_str());

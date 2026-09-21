@@ -301,6 +301,31 @@ routes, each closed for a different reason:
    specced in `docs/TURING_FG_APP_BLUEPRINT.md`; it would be LSFG-class, not
    Smooth Motion, and changes nothing in this port's verdicts.
 
+## 5f. Path-3 milestone 0: ABI survey harness (shipped)
+
+`SM75_ABI_PROBE=1` (see `examples/run_probe_rtx2060_abi.bat`): on the Turing
+plan, every intercepted `cuModuleLoadData` image is replaced with a one-kernel
+PTX stub that the driver's own JIT compiles to native sm_75 (structurally safe
+- legal instructions, writes nothing, cannot fault), and `cuModuleGetFunction`,
+`cuLaunchKernel`, `cuGraphAddKernelNode(_v2)`, `cuGraphLaunch` and
+`cuMemAlloc_v2` are logged (first 64 per category) under `[nvs30-abi]`.
+
+What the log yields for a native-Turing reimplementation:
+* the exact function-name surface NvPresent resolves (the reference project's
+  published `conv*/attn*/depth_to_space/...` list can finally be *verified*
+  against the live driver, and any extra names discovered);
+* launch configs (grid/block/shmem) - kernel shape and working-set hints;
+* graph topology (node counts, dependency fan-in) - the ping-pong contract;
+* allocation sizes from the first module load onward - per-plane buffer math
+  (frame sizes at the user's resolution, flow planes, weight scratch).
+
+Limitations: allocations made before the first intercepted load are not seen;
+if NvPresent validates real module contents (it doesn't in the measured
+616.92/590-era layouts, since it tolerates the fail-closed path today), it may
+degrade early - which is itself information. Nothing about the default
+fail-closed product behavior changes; the stub path never activates without
+the explicit env var on a Turing-plan GPU.
+
 ## 6. Known limitations
 
 * **Barrier #1 (resolved, artificial):** the `[rcx+14h]>=2/3` whitelist — already forced
