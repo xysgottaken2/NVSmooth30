@@ -272,6 +272,14 @@ routes, each closed for a different reason:
    motion vectors through a vendor SDK - the whole point of Smooth Motion is
    that it needs nothing from the game, which is why it is driver-resident,
    and why its driver-resident kernels are the hard wall this port hit.
+4. **Game-side DLSS 5 (2026): DLSS5-Swapper ecosystem.** NVIDIA has no
+   per-game DLSS 5 switch; modders filled the gap (github.com/rakanki911/
+   DLSS5-Swapper): patched `nvngx_dlssnr.dll` + a "DLSS5-Feeder" route that
+   adds Neural Rendering to games with no DLSS at all (DX8/9/11/12/VK/GL,
+   emulators; estimated motion vectors). It claims RTX 20-50 compatibility
+   and carries per-game/per-card community validation. Out of scope here:
+   it is game-file injection (AC-visible), not driver patching, and does not
+   provide frame generation - Smooth Motion's niche (and its wall) stand.
 
 ## 6. Known limitations
 
