@@ -239,6 +239,40 @@ the game to Steam as a non-Steam shortcut. Artifact note: interpolated
 output on Ampere (no FP8/late-gen tensor path) shows more ghosting than
 Ada/Blackwell at low base FPS - upstream is aware; not fixable by the port.
 
+## 5e. FAQ: why not translation / an FSR-style replacement (the DLSSG mod analogy)?
+
+Reader question: modders made "DLSS Frame Gen -> FSR 3 Frame Gen" work on
+unsupported GPUs - why not do the same for Smooth Motion? Three distinct
+routes, each closed for a different reason:
+
+1. **API-shim replacement (the actual DLSSG->FSR3 trick).** That mod is
+   possible because DLSS FG has a public, documented, versioned boundary:
+   the game calls `nvngx_dlssg`'s COM-style API (D3D11/D3D12 resources +
+   engine motion vectors go in, interpolated frame comes out). Swapping the
+   implementation only requires honoring that contract. Smooth Motion has no
+   such boundary: it is private machinery inside `NvPresent64.dll`, between
+   the D3D11 runtime and the driver's own D3D12 shadow chain, with kernel
+   arguments in undocumented internal structures and no stable ABI. There is
+   no seam to shim from the outside; reproducing the slot means replacing the
+   whole pipeline, which by definition is no longer "Smooth Motion on
+   Turing" but a new frame-generation engine (out of this port's charter,
+   which prohibits substituting algorithms).
+2. **SASS translation (a "Rosetta" for cubins).** `nvdisasm` can read
+   sm_89, but NVIDIA never published an assembler for sm_75 control words,
+   scheduling/barrier semantics, or memory-model encodings; control bits are
+   opaque and lossy even when round-tripped to PTX. A working major 8 ->
+   major 7 translator is a standalone reverse-engineering project (years,
+   per-driver-fragile) and the exact capability NVIDIA removed from the
+   public toolchain. No PTX source exists in any obtainable Turing driver
+   to sidestep this (measured, sections 5c/5d).
+3. **The user-side equivalent that already exists.** For games with native
+   DLSS 3 or FSR integration, FSR3-style FG mods run on RTX 20 today (AMD's
+   SDK is open and has non-tensor DP4a profiles). That is a *different
+   feature* with different coverage: it needs the game to expose engine
+   motion vectors through a vendor SDK - the whole point of Smooth Motion is
+   that it needs nothing from the game, which is why it is driver-resident,
+   and why its driver-resident kernels are the hard wall this port hit.
+
 ## 6. Known limitations
 
 * **Barrier #1 (resolved, artificial):** the `[rcx+14h]>=2/3` whitelist — already forced
