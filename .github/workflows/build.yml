@@ -46,7 +46,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           # Mirror compiler diagnostics into check-run annotations (API-readable).
           if grep -qa "error" build-output.txt; then
-            grep -aE "error [A-Z]+[0-9]+" build-output.txt | head -30 | tr -d "\r" | sed "s/::/%3A%3A/g; s/%3A%3Aerror/%3Aerror/g" | while IFS= read -r line; do
+            grep -aE "error [A-Z]+[0-9]+" build-output.txt | head -30 | tr -d "\r" | sed "s/%/%25/g" | while IFS= read -r line; do
               echo "::error::${line}"
             done
           fi

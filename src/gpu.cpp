@@ -15,7 +15,7 @@
 
 namespace nvs30::gpu {
 namespace {
-using CuInit = int (CUDAAPI*)();
+using CuInit = int (CUDAAPI*)(unsigned int);  // cuInit(unsigned flags) - stable signature
 using CuDeviceGetCount = int (CUDAAPI*)(int*);
 using CuDeviceGet = int (CUDAAPI*)(int*, int);
 using CuDeviceGetName = int (CUDAAPI*)(char*, int, int);
@@ -113,7 +113,7 @@ Info probe() {
         info.plan = Plan::PassthroughOnly;
         return info;
     }
-    if (ld.init(0) != 0) {
+    if (ld.init(0u) != 0) {
         info.source = "cuinit-failed";
         info.plan = Plan::PassthroughOnly;
         return info;
