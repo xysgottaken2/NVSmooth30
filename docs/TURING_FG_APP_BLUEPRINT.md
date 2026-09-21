@@ -92,3 +92,38 @@ Goal stack on RTX 2060 (2026-09), per owner: **DLSS 5 quality + frame generation
 NVIDIA exposing driver-side MV/depth to a non-40 API, a PTX-carrying driver
 (monitored by `.github/workflows/ptx-watchdog.yml` - issue auto-opens), or
 AMD-style AFMF-for-GeForce (neither is announced as of 2026-09).
+
+
+## Evidence anchors from the reference project (ReverieBizarre/Smooth-Motion-for-RTX30)
+
+Published structure we would build against (their RTX 3080 validation ran on
+driver 616.56 - same era as our measurements; their "unpatched Ampere ->
+CUDA_ERROR_NO_BINARY_FOR_GPU (209)" result is independent confirmation that
+the shipped containers rely solely on cubin relabeling: PTX was absent at the
+feature's birth, else Ampere unlocking would never have needed binary
+surgery, QMMA/FP8 kernel isolation, etc.):
+
+- 37 embedded fatbins; each = {sm_89, sm_120} ELF pair.
+- Master pointer table of 36 fatbin images at a fixed image VA (0x18022ead0
+  in their build) - entries [0..18] are the 19 FP16 modules actually used on
+  Ampere: conv1..8, conv_fused, conv_proj1/2, conv_out1/2/3, attn1/2,
+  depth_to_space, downscale_kernel, warp_coarse_kernel, main_kernel.
+- Execution: CUDA-graph ping-pong via cuGraphLaunch with a resolution guard;
+  5-object COM swapchain hierarchy drives activation.
+- FP8 variants are separate fatbins (Q/MMA instructions absent on Ampere) -
+  the same instruction-class reasoning our ladders encode.
+
+Consequences for a custom-kernel route (path "modder"):
+
+1. The ABI surface to satisfy is named: ~19 module/function signatures +
+   graph launch order + buffer ping-pong contract. First milestone should be
+   a harness that replaces intercepted modules with pass-through kernels and
+   LOGS every cuModuleGetFunction name and launch parameter block, rather
+   than trying to statically reverse each structure.
+2. Weight reuse is off the table (NVIDIA's trained FP16 model lives in the
+   sm_89 cubin constant banks; extracting/repurposing it is model theft, not
+   porting). The custom pass is flow+warp math of our own = LSFG-class
+   quality, honestly labeled "Smooth-Motion-compatible", never "Smooth
+   Motion".
+3. Pointer-table VAs and gates are per-driver-build; the existing pattern
+   scanners in this repo (not raw addresses) are the only durable way in.
